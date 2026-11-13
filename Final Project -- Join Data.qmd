@@ -1,0 +1,123 @@
+---
+title: "Final Project -- Join Data"
+author: "Aastith & Joshua"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+```{r}
+#|warning: false
+library(tidyverse)
+
+
+cdc_data <- read_csv("~/Downloads/PLACES__Local_Data_for_Better_Health,_Census_Tract_Data,_2025_release_20261112.csv")
+summary(cdc_data)
+```
+
+```{r}
+
+holc_data <- read.csv("~/Downloads/result/Tracts_2020_HOLC.csv")
+
+summary(holc_data)
+```
+
+## Section I: HOLC Redlining Data
+
+### Data source
+
+the original maps were made by the Home Owners' Loan Corporation (HOLC), a federal agency that graded neighborhoods in the U.S. Cities from A ("Best") to D ("Hazardous") between 1935 to 1940.The Mapping Inequality project at the University of Richmond's Digital Scholorship Lab digitized these maps (https://dsl.richmond.edu/panorama/redlining/). The csv file that we are using is form 2021. It is real data as each row comes from a scanned historical map and an official census tract.
+
+### Data Meaning
+
+Each row is one piece of a 2020 Census tract that overlaps one HOLC neighborhood. It records the neighborhood's grade, the city/state, and the share of the tract that neighborhood covers. This is done to tell us which present-day neighborhoods were redlined in the 1930s.
+
+### Data Join
+
+We will join the census tract with the other dataset. This file identifies tracts with an NHGIS, while CDC PLACES uses the standard 11-digit FIPS code. We will convert the GISJOIN to FIPS. Because one tract can overlap with several HOLC neighborhoods, we will also combine the rows so each tract only appears once.
+
+### Data observations
+
+```{r}
+glimpse(holc_data)
+```
+
+The dataset has 42,074 rows, with 8 colums. The columns are oberversable with the glimpse() function. Each column is either a character or a double.
+
+### Data issues
+
+The HOLC data has only 5 missing values, all in the shape_area, a column we are not using this project. There are 19 rows with the non-standard "E" grade, which we removed before the join. Many tracts appear more than once because they overlap several neighborhoods, so we combined them into one row per tract in Section III. the main limitation is that HOLC only mapped about 200 cities, so rural areas are not included.
+
+```{r}
+colSums(is.na(holc_data))
+holc_data |> count(first_holc)
+holc_data |> summarise(
+  rows = n(),
+  unique_tracts = n_distinct(gisjoin)
+)
+```
+
+## Section II: HOLC Redlining Data
+
+### Data source
+
+CDC PLACES is produced by the Centers for Disease Control and Prevention in patnership with the Robert Wood Johnson Foundation and the CDC foundation (https://github.com/americanpanorama/Census_HOLC_Research/tree/main). We used the 2025 release, which estimates for 2022 and 2023. The estimates are modeled from the Behavioural Risk Factor Surveillance System (BRFSS), a national phone survey, combined with the Census population data. It is reliable because it comes from an official public health agency with published methods.
+
+### Data Meaning
+
+PLACES calculates the proportion of adults in each census tract with a particular health condition or behavior, including asthma, hypertension, diabetes, or lack of health insurance. It lets us examine whether areas redlined in the 1930s correlate with poor health outcomes.
+
+### Data Join
+
+The tract ID is 'LocationName', which is already a 11-digit FIPS code. The data is in "long" format. We would need to reshape it to one row per tract before joining.
+
+### Data observations
+
+```{r}
+glimpse(cdc_data)
+```
+
+the dataset has 3,047,284 rows and 24 columns. The colimns are observable with the glimpse() function. Most columns are characters, with 2 being logical.
+
+### Data issues
+
+There are no missing values in Data_Value, but this release has no health data we can use for Pennsylvania or Kentucky, and Connecticut's tract ID is different. So, 1,366 HOLC tracts cannot be joined.
+
+```{r}
+colSums(is.na(cdc_data))
+cdc_data |> filter(StateAbbr == "PA"| StateAbbr == "KY") |>
+  distinct(MeasureId)
+```
+
+## Section III: Joining the Data
+
+### Preparing the Data
+
+- Converted the HOLC GISJOIN code into 11-digit tract FIPS codes
+- Kept only grades A–D
+- Combined the multiple HOLC rows for each tract into one row
+- Kept five CDC measures: asthma, high blood pressure, diabetes, obesity, and lack of health insurance
+- Reshaped the CDC data so each tract is one row
+
+```{r}
+holc_tract <- holc_data |>
+  filter(first_holc != "E") |>
+  mutate(tract_id = paste0(str_sub(gisjoin, 2, 3), str_sub(gisjoin, 5, 7), str_sub(gisjoin, 9, 14))) |>
+  group_by(tract_id) |>
+  filter(sum_perc == max(sum_perc)) |>
+  select(tract_id, city = max_city, state = max_state,
+         main_grade = first_holc, pct_holc = sum_perc)
+
+cdc_tract <- cdc_data |>
+  filter(MeasureId == "CASTHMA" | MeasureId == "BPHIGH" | MeasureId == "DIABETES" |
+         MeasureId == "OBESITY" | MeasureId == "ACCESS2") |>
+  select(tract_id = LocationName, county = CountyName, TotalPopulation, MeasureId, Data_Value) |>
+  pivot_wider(names_from = MeasureId, values_from = Data_Value)
+
+combined <- inner_join(holc_tract, cdc_tract, by = "tract_id")
+glimpse(combined)
+```
+
+
+
